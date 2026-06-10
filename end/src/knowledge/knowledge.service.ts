@@ -58,8 +58,6 @@ export class KnowledgeService {
         apiKeyConfigured: false,
         apiKeyMasked: '',
         folderId: '',
-        syncEnabled: true,
-        syncIntervalMinutes: 60,
       }
     }
 
@@ -74,16 +72,11 @@ export class KnowledgeService {
     const current = (await this.loadConfig(uid)) ?? {
       apiKey: '',
       folderId: '',
-      syncEnabled: true,
-      syncIntervalMinutes: 60,
     }
 
     const next: YoudaoNotesConfig = {
       apiKey: dto.apiKey?.trim() || current.apiKey,
       folderId: dto.folderId?.trim() ?? current.folderId,
-      syncEnabled: dto.syncEnabled ?? current.syncEnabled,
-      syncIntervalMinutes:
-        dto.syncIntervalMinutes ?? current.syncIntervalMinutes,
     }
 
     if (!next.apiKey) {
@@ -259,8 +252,6 @@ export class KnowledgeService {
       apiKeyConfigured: !!config.apiKey,
       apiKeyMasked: this.maskKey(config.apiKey),
       folderId: config.folderId,
-      syncEnabled: config.syncEnabled,
-      syncIntervalMinutes: config.syncIntervalMinutes,
     }
   }
 

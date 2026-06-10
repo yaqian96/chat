@@ -1,16 +1,12 @@
 export interface YoudaoNotesConfig {
   apiKey: string
   folderId: string
-  syncEnabled: boolean
-  syncIntervalMinutes: number
 }
 
 export interface YoudaoConfigPublic {
   apiKeyConfigured: boolean
   apiKeyMasked: string
   folderId: string
-  syncEnabled: boolean
-  syncIntervalMinutes: number
 }
 
 export interface YoudaoSyncMeta {

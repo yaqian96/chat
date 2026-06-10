@@ -3,8 +3,6 @@ export type KnowledgeTab = 'youdao' | 'local'
 export interface YoudaoNotesConfig {
   apiKey: string
   folderId: string
-  syncEnabled: boolean
-  syncIntervalMinutes: number
 }
 
 export interface YoudaoSyncMeta {

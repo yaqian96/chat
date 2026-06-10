@@ -247,6 +247,7 @@ class NoopMem0MemoryStore extends Mem0MemoryStore {
       invoke: async () => ({
         write_user: false,
         write_session: false,
+        category: 'identity',
         reason: 'mem0 disabled',
       }),
     })

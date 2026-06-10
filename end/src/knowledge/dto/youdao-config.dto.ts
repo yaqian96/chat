@@ -1,4 +1,4 @@
-import { IsBoolean, IsInt, IsOptional, IsString, Max, Min } from 'class-validator'
+import { IsOptional, IsString } from 'class-validator'
 
 export class YoudaoConfigDto {
   @IsOptional()
@@ -8,14 +8,4 @@ export class YoudaoConfigDto {
   @IsOptional()
   @IsString()
   folderId?: string
-
-  @IsOptional()
-  @IsBoolean()
-  syncEnabled?: boolean
-
-  @IsOptional()
-  @IsInt()
-  @Min(15)
-  @Max(1440)
-  syncIntervalMinutes?: number
 }

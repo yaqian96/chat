@@ -29,9 +29,11 @@ import { VectorRetriever } from './retrieval/vector.retriever'
 import { SearchController } from './search.controller'
 import { UploadController } from './upload.controller'
 import { UploadService } from './upload.service'
+import { EvaluationController } from './evaluation/evaluation.controller'
+import { EvaluationService } from './evaluation/evaluation.service'
 
 @Module({
-  controllers: [KnowledgeController, UploadController, SearchController],
+  controllers: [KnowledgeController, UploadController, SearchController, EvaluationController],
   providers: [
     KnowledgeService,
     UploadService,
@@ -60,6 +62,7 @@ import { UploadService } from './upload.service'
     GraphRetriever,
     HybridSearchService,
     IndexSyncService,
+    EvaluationService,
   ],
   exports: [KnowledgeService, IngestionService, HybridSearchService, IndexSyncService],
 })

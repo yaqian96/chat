@@ -14,8 +14,6 @@ import type { YoudaoNotesConfig } from '@/types/knowledge'
 const form = ref<YoudaoNotesConfig>({
   apiKey: '',
   folderId: '',
-  syncEnabled: true,
-  syncIntervalMinutes: 60,
 })
 
 const apiKeyConfigured = ref(false)
@@ -42,8 +40,6 @@ async function loadConfig() {
     apiKeyConfigured.value = config.apiKeyConfigured
     apiKeyMasked.value = config.apiKeyMasked
     form.value.folderId = config.folderId
-    form.value.syncEnabled = config.syncEnabled
-    form.value.syncIntervalMinutes = config.syncIntervalMinutes
 
     const status = await knowledgeApi.getYoudaoStatus()
     lastSyncedAt.value = status.lastSyncedAt
@@ -67,8 +63,6 @@ async function handleSave() {
     const saved = await knowledgeApi.saveYoudaoConfig({
       apiKey: form.value.apiKey.trim(),
       folderId: form.value.folderId.trim(),
-      syncEnabled: form.value.syncEnabled,
-      syncIntervalMinutes: form.value.syncIntervalMinutes,
     })
     apiKeyConfigured.value = saved.apiKeyConfigured
     apiKeyMasked.value = saved.apiKeyMasked
@@ -204,43 +198,6 @@ async function handleSyncNow() {
         <p class="mt-1 text-xs text-gray-400">
           可通过 youdaonote list 或 MCP 工具查看目录 fileId
         </p>
-      </div>
-
-      <div class="flex items-center justify-between py-2">
-        <div>
-          <p class="text-sm font-medium text-gray-700">自动同步</p>
-          <p class="text-xs text-gray-400 mt-0.5">开启后按间隔自动拉取笔记更新</p>
-        </div>
-        <button
-          type="button"
-          role="switch"
-          :aria-checked="form.syncEnabled"
-          :class="[
-            'relative w-10 h-5 rounded-full transition-colors',
-            form.syncEnabled ? 'bg-brand' : 'bg-gray-200',
-          ]"
-          @click="form.syncEnabled = !form.syncEnabled"
-        >
-          <span
-            :class="[
-              'absolute top-0.5 left-0.5 w-4 h-4 bg-white rounded-full shadow transition-transform',
-              form.syncEnabled ? 'translate-x-5' : 'translate-x-0',
-            ]"
-          />
-        </button>
-      </div>
-
-      <div v-if="form.syncEnabled">
-        <label class="block text-sm font-medium text-gray-700 mb-1.5">
-          同步间隔（分钟）
-        </label>
-        <select v-model.number="form.syncIntervalMinutes" class="input-field">
-          <option :value="15">每 15 分钟</option>
-          <option :value="30">每 30 分钟</option>
-          <option :value="60">每 1 小时</option>
-          <option :value="360">每 6 小时</option>
-          <option :value="1440">每天</option>
-        </select>
       </div>
 
       <div
