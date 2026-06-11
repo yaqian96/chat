@@ -8,6 +8,7 @@
 - **短期记忆**：Redis 存储当前会话上下文，支持自动摘要（TTL 30 分钟）
 - **长期记忆**：Mem0 用户层/会话层分层记忆，支持 8 类细分类别（身份、偏好、项目、学习、任务、反馈、知识库使用、决策）
 - **知识库入库**：有道笔记同步、文件上传 → 清洗 → 分块 → 向量化 → pgvector
+- **智能检索路由**：根据查询类型自动选择最优检索策略（向量/BM25/图谱/混合）
 - **三路混合检索**：pgvector 向量 + Elasticsearch BM25 + Neo4j GraphRAG，RRF 融合
 - **可观测性**：LangSmith 链路追踪（可选）
 - **检索评测**：内置 RAG 评测工具，支持 Recall / Precision / MRR / NDCG 指标，按难度与查询类型分组
@@ -264,6 +265,67 @@ Redis / PostgreSQL / ES / Neo4j 不可用，后端会降级或检索失败。先
 
 **检索无结果**\
 确认文档 `status = indexed`，且 `userId` 与入库时一致；可执行 `POST /api/knowledge/search/reindex?userId=xxx` 重建索引。
+
+## 智能检索路由
+
+系统内置智能检索路由（Retrieval Router），根据查询类型自动选择最优检索策略，避免每次都跑满三路检索（高成本且慢）。
+
+### 查询类型识别
+
+| 类型 | 特征词 | 示例 |
+|------|------|------|
+| **open_ended** | 如何、怎么、为什么、怎么样 | "如何准备技术面试" |
+| **factual** | 是什么、多少、何时、哪里 | "Vue3 的生命周期是什么" |
+| **entity_relation** | 关联、关系、区别、对比、vs | "React 和 Vue 的区别" |
+| **technical** | 原理、机制、底层、实现、核心 | "虚拟 DOM 的实现原理" |
+| **exact_match** | 具体术语、API、方法名 | "`Component` 组件怎么用" |
+| **comprehensive** | 并且、以及、还有（多问题） | "如何优化性能以及有哪些方法" |
+
+### 检索策略映射
+
+| 查询类型 | 推荐策略 | 使用渠道 | 说明 |
+|----------|----------|----------|------|
+| `open_ended` | `vector` | 向量检索 | 开放性问题，依赖语义理解 |
+| `factual` | `bm25` | BM25 | 事实性问题，需要精确关键词匹配 |
+| `entity_relation` | `graph` | 图谱检索 | 实体关系查询，图谱检索最优 |
+| `technical` | `vector_bm25` | 向量 + BM25 | 技术原理，需要语义 + 精确术语 |
+| `exact_match` | `bm25` | BM25 | 精确匹配查询 |
+| `comprehensive` | `hybrid` | 三路混合 | 综合问题，需要多路检索 |
+
+### 特殊规则
+
+系统还包含一些特殊规则来优化特定场景：
+
+1. **精确术语 + 关系查询** → `bm25_graph`
+   - 示例："`Composition API` 和 `Options API` 的关联"
+   - 理由：需要 BM25 精确匹配术语 + Graph 关系检索
+
+2. **数量/数据查询** → `bm25_graph`
+   - 示例："有多少种前端框架"
+   - 理由：BM25 精确数字匹配 + Graph 结构化数据
+
+3. **技术原理 + 关联应用** → `hybrid`
+   - 示例："虚拟 DOM 的原理及应用场景"
+   - 理由：需要三路混合检索全面覆盖
+
+### 实现细节
+
+路由决策由 [`retrieval-router.service.ts`](file:///d:/职业/code/cursor/assistant/chat/end/src/knowledge/retrieval/retrieval-router.service.ts) 实现：
+
+- 使用正则表达式匹配查询特征词
+- 计算各类型匹配得分，选择最高分类型
+- 根据类型映射到检索策略
+- 返回决策结果（含置信度和推理说明）
+
+### 日志示例
+
+```
+Routing "如何准备技术面试" -> vector (open_ended, confidence: 0.85)
+Routing "Vue3 的生命周期是什么" -> bm25 (factual, confidence: 0.80)
+Routing "React 和 Vue 的区别" -> graph (entity_relation, confidence: 0.85)
+Routing "虚拟 DOM 的实现原理" -> vector_bm25 (technical, confidence: 0.80)
+Routing "有多少种前端框架" -> bm25_graph (factual, confidence: 0.85)
+```
 
 ## 检索评测
 

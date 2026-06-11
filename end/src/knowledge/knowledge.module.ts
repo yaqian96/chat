@@ -26,6 +26,7 @@ import { GraphRetriever } from './retrieval/graph.retriever'
 import { HybridSearchService } from './retrieval/hybrid-search.service'
 import { IndexSyncService } from './retrieval/index-sync.service'
 import { VectorRetriever } from './retrieval/vector.retriever'
+import { RetrievalRouter } from './retrieval/retrieval-router.service'
 import { SearchController } from './search.controller'
 import { UploadController } from './upload.controller'
 import { UploadService } from './upload.service'
@@ -61,6 +62,7 @@ import { EvaluationService } from './evaluation/evaluation.service'
     Bm25Retriever,
     GraphRetriever,
     HybridSearchService,
+    RetrievalRouter,
     IndexSyncService,
     EvaluationService,
   ],

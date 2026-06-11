@@ -1,3 +1,5 @@
+import type { RoutingDecision } from './retrieval-router.service'
+
 export type SearchChannel = 'vector' | 'bm25' | 'graph'
 
 export interface ChunkSearchHit {
@@ -26,6 +28,7 @@ export interface HybridSearchResult {
     bm25: number
     graph: number
   }
+  routingDecision?: RoutingDecision
 }
 
 export interface ChunkIndexRecord {

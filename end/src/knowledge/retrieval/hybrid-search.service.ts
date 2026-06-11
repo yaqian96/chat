@@ -3,6 +3,7 @@ import { ConfigService } from '@nestjs/config'
 import { Bm25Retriever } from './bm25.retriever'
 import { GraphRetriever } from './graph.retriever'
 import { VectorRetriever } from './vector.retriever'
+import { RetrievalRouter, RetrievalStrategy } from './retrieval-router.service'
 import type { ChunkSearchHit, HybridSearchOptions, HybridSearchResult } from './types'
 
 const CONTEXT_CHUNK_MAX_CHARS = 300
@@ -18,6 +19,7 @@ export class HybridSearchService {
     private readonly vector: VectorRetriever,
     private readonly bm25: Bm25Retriever,
     private readonly graph: GraphRetriever,
+    private readonly router: RetrievalRouter,
   ) {
     this.defaultTopK = Number(this.config.get('SEARCH_TOP_K') ?? 10) || 10
     this.rrfK = Number(this.config.get('SEARCH_RRF_K') ?? 60) || 60
@@ -27,19 +29,51 @@ export class HybridSearchService {
     query: string,
     options: HybridSearchOptions,
   ): Promise<HybridSearchResult> {
-    const topK = options.topK ?? this.defaultTopK
-    const perChannelK = Math.max(topK * 2, 20)
+    // 自动路由决策
+    const routingDecision = this.router.route(query)
+    const strategy = routingDecision.strategy
+    const channels = this.router.getChannelsForStrategy(strategy)
 
-    const [vectorHits, bm25Hits, graphHits] = await Promise.all([
-      this.vector.search(query, options.userId, perChannelK),
-      this.bm25.search(query, options.userId, perChannelK),
-      this.graph.search(query, options.userId, perChannelK),
+    this.logger.log(
+      `Routing "${query.slice(0, 50)}" -> ${strategy} (${routingDecision.queryType}, confidence: ${routingDecision.confidence.toFixed(2)})`,
+    )
+
+    // 根据策略执行检索
+    const results = await Promise.all([
+      channels.includes('vector')
+        ? this.vector.search(query, options.userId, options.topK ?? this.defaultTopK)
+        : [],
+      channels.includes('bm25')
+        ? this.bm25.search(query, options.userId, options.topK ?? this.defaultTopK)
+        : [],
+      channels.includes('graph')
+        ? this.graph.search(query, options.userId, options.topK ?? this.defaultTopK)
+        : [],
     ])
 
-    const fused = this.fuseRrf([vectorHits, bm25Hits, graphHits]).slice(0, topK)
+    const [vectorHits, bm25Hits, graphHits] = results
+
+    // 如果只使用单一渠道，直接返回
+    if (channels.length === 1) {
+      const hits = channels[0] === 'vector' ? vectorHits : channels[0] === 'bm25' ? bm25Hits : graphHits
+
+      return {
+        query,
+        hits,
+        channels: {
+          vector: vectorHits.length,
+          bm25: bm25Hits.length,
+          graph: graphHits.length,
+        },
+        routingDecision,
+      }
+    }
+
+    // 多路融合
+    const fused = this.fuseRrf([vectorHits, bm25Hits, graphHits]).slice(0, options.topK ?? this.defaultTopK)
 
     this.logger.debug(
-      `Hybrid search "${query.slice(0, 40)}": vector=${vectorHits.length}, bm25=${bm25Hits.length}, graph=${graphHits.length}, fused=${fused.length}`,
+      `Fused results: vector=${vectorHits.length}, bm25=${bm25Hits.length}, graph=${graphHits.length}, final=${fused.length}`,
     )
 
     return {
@@ -50,6 +84,7 @@ export class HybridSearchService {
         bm25: bm25Hits.length,
         graph: graphHits.length,
       },
+      routingDecision,
     }
   }
 
