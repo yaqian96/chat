@@ -10,17 +10,20 @@
 - **知识库入库**：有道笔记同步、文件上传 → 清洗 → 分块 → 向量化 → pgvector
 - **三路混合检索**：pgvector 向量 + Elasticsearch BM25 + Neo4j GraphRAG，RRF 融合
 - **可观测性**：LangSmith 链路追踪（可选）
+- **检索评测**：内置 RAG 评测工具，支持 Recall / Precision / MRR / NDCG 指标，按难度与查询类型分组
 
 ## 记忆机制
 
 ### 短期记忆（Redis）
+
 - 当前会话上下文，TTL 30 分钟
 - 支持 LangGraph 自动摘要（8 条消息触发）
 
 ### 长期记忆（Mem0）
+
 - **用户层**：跨会话长期事实（身份、偏好、项目、学习等）
 - **会话层**：当前会话任务、进度、临时决策
-- **细分类别**：identity / preference / project / learning / task / feedback / knowledge_usage / decision
+- **细分类别**：identity / preference / project / learning / task / feedback / knowledge\_usage / decision
 - 分类器自动判断是否写入及分类层级
 
 ## 架构
@@ -62,17 +65,17 @@ flowchart TB
 
 ## 技术栈
 
-| 层级 | 技术 |
-|------|------|
-| 前端 | Vue 3、Vite、TailwindCSS |
-| 后端 | NestJS、TypeScript |
-| 对话 | LangChain、LangGraph、OpenRouter |
-| 记忆 | Redis、Mem0 |
-| 向量库 | PostgreSQL + pgvector |
-| 全文检索 | Elasticsearch 8.15 |
-| 图谱检索 | Neo4j 5.26 |
-| 任务队列 | BullMQ + Redis |
-| 追踪 | LangSmith（可选） |
+| 层级   | 技术                             |
+| ---- | ------------------------------ |
+| 前端   | Vue 3、Vite、TailwindCSS         |
+| 后端   | NestJS、TypeScript              |
+| 对话   | LangChain、LangGraph、OpenRouter |
+| 记忆   | Redis、Mem0                     |
+| 向量库  | PostgreSQL + pgvector          |
+| 全文检索 | Elasticsearch 8.15             |
+| 图谱检索 | Neo4j 5.26                     |
+| 任务队列 | BullMQ + Redis                 |
+| 追踪   | LangSmith（可选）                  |
 
 ## 快速开始
 
@@ -82,14 +85,14 @@ flowchart TB
 docker compose up -d
 ```
 
-| 服务 | 地址 | 说明 |
-|------|------|------|
-| Redis | `localhost:6379` | 短期记忆、任务队列 |
-| RedisInsight | `http://localhost:5540` | Redis GUI |
-| PostgreSQL | `localhost:5432` | 用户 `membot` / 密码 `membot` |
-| pgAdmin | `http://localhost:5050` | 邮箱 `admin@membot.com` / 密码 `membot` |
-| Elasticsearch | `http://localhost:9200` | BM25 检索 |
-| Neo4j Browser | `http://localhost:7474` | 用户 `neo4j` / 密码 `membot123` |
+| 服务            | 地址                      | 说明                                  |
+| ------------- | ----------------------- | ----------------------------------- |
+| Redis         | `localhost:6379`        | 短期记忆、任务队列                           |
+| RedisInsight  | `http://localhost:5540` | Redis GUI                           |
+| PostgreSQL    | `localhost:5432`        | 用户 `membot` / 密码 `membot`           |
+| pgAdmin       | `http://localhost:5050` | 邮箱 `admin@membot.com` / 密码 `membot` |
+| Elasticsearch | `http://localhost:9200` | BM25 检索                             |
+| Neo4j Browser | `http://localhost:7474` | 用户 `neo4j` / 密码 `membot123`         |
 
 ### 2. 配置环境变量
 
@@ -137,7 +140,8 @@ chat/
 │       ├── chat/           # 流式对话、Mem0、Redis 记忆
 │       ├── knowledge/      # 知识库同步、入库、检索
 │       │   ├── ingestion/  # 解析、分块、向量化、队列
-│       │   └── retrieval/  # vector / bm25 / graph / RRF
+│       │   ├── retrieval/  # vector / bm25 / graph / RRF
+│       │   └── evaluation/ # 检索评测（Recall / Precision / MRR / NDCG）
 │       ├── sessions/       # 会话管理
 │       └── health/         # 健康检查
 ├── docs/                   # 设计文档
@@ -165,37 +169,37 @@ chat/
 
 对话或 `POST /api/knowledge/search` 时并行执行三路检索，经 RRF 融合后注入 System Prompt：
 
-| 通道 | 存储 | 适用场景 |
-|------|------|----------|
-| `vector` | pgvector | 语义相似 |
-| `bm25` | Elasticsearch | 关键词匹配 |
-| `graph` | Neo4j | 实体关联、全文 |
+| 通道       | 存储            | 适用场景    |
+| -------- | ------------- | ------- |
+| `vector` | pgvector      | 语义相似    |
+| `bm25`   | Elasticsearch | 关键词匹配   |
+| `graph`  | Neo4j         | 实体关联、全文 |
 
 ## 主要 API
 
 ### 对话
 
-| 方法 | 路径 | 说明 |
-|------|------|------|
+| 方法     | 路径                              | 说明       |
+| ------ | ------------------------------- | -------- |
 | `POST` | `/api/sessions/:id/chat/stream` | SSE 流式对话 |
 
 ### 会话
 
-| 方法 | 路径 | 说明 |
-|------|------|------|
-| `GET` | `/api/sessions/history` | 会话列表 |
-| `POST` | `/api/sessions` | 创建会话 |
+| 方法     | 路径                      | 说明   |
+| ------ | ----------------------- | ---- |
+| `GET`  | `/api/sessions/history` | 会话列表 |
+| `POST` | `/api/sessions`         | 创建会话 |
 
 ### 知识库
 
-| 方法 | 路径 | 说明 |
-|------|------|------|
-| `POST` | `/api/knowledge/youdao/sync` | 同步有道笔记 |
-| `GET` | `/api/knowledge/youdao/status` | 同步状态 |
-| `POST` | `/api/knowledge/upload` | 上传文档 |
-| `POST` | `/api/knowledge/search` | 混合检索 |
+| 方法     | 路径                              | 说明             |
+| ------ | ------------------------------- | -------------- |
+| `POST` | `/api/knowledge/youdao/sync`    | 同步有道笔记         |
+| `GET`  | `/api/knowledge/youdao/status`  | 同步状态           |
+| `POST` | `/api/knowledge/upload`         | 上传文档           |
+| `POST` | `/api/knowledge/search`         | 混合检索           |
 | `POST` | `/api/knowledge/search/reindex` | 重建 ES/Neo4j 索引 |
-| `POST` | `/api/knowledge/ingest/retry` | 重试失败入库 |
+| `POST` | `/api/knowledge/ingest/retry`   | 重试失败入库         |
 
 ### 示例：混合检索
 
@@ -207,25 +211,25 @@ curl -X POST "http://localhost:3001/api/knowledge/search?userId=demo_user_001" \
 
 ## 环境变量
 
-| 变量 | 说明 | 默认值 |
-|------|------|--------|
-| `OPENROUTER_API_KEY` | OpenRouter API Key | — |
-| `OPENROUTER_MODEL` | 对话模型 | — |
-| `MEM0_API_KEY` | Mem0 API Key | — |
-| `JWT_SECRET` | JWT 签名密钥 | — |
-| `JWT_EXPIRES_SECONDS` | Token 有效期（秒） | `604800`（7 天） |
-| `DATABASE_URL` | PostgreSQL 连接串 | — |
-| `REDIS_HOST` / `REDIS_PORT` | Redis | `localhost` / `6379` |
-| `EMBEDDING_MODEL` | Embedding 模型 | — |
-| `EMBEDDING_DIMENSIONS` | 向量维度 | `1536` |
-| `ELASTICSEARCH_URL` | ES 地址 | `http://localhost:9200` |
-| `NEO4J_URI` | Neo4j Bolt 地址 | `bolt://localhost:7687` |
-| `NEO4J_PASSWORD` | Neo4j 密码 | — |
-| `SEARCH_TOP_K` | 检索返回条数 | `10` |
-| `SEARCH_RRF_K` | RRF 平滑系数 | `60` |
-| `LANGCHAIN_TRACING_V2` | 开启 LangSmith | `false` |
-| `LANGCHAIN_API_KEY` | LangSmith API Key | — |
-| `LANGCHAIN_PROJECT` | LangSmith 项目名 | — |
+| 变量                          | 说明                 | 默认值                     |
+| --------------------------- | ------------------ | ----------------------- |
+| `OPENROUTER_API_KEY`        | OpenRouter API Key | —                       |
+| `OPENROUTER_MODEL`          | 对话模型               | —                       |
+| `MEM0_API_KEY`              | Mem0 API Key       | —                       |
+| `JWT_SECRET`                | JWT 签名密钥           | —                       |
+| `JWT_EXPIRES_SECONDS`       | Token 有效期（秒）       | `604800`（7 天）           |
+| `DATABASE_URL`              | PostgreSQL 连接串     | —                       |
+| `REDIS_HOST` / `REDIS_PORT` | Redis              | `localhost` / `6379`    |
+| `EMBEDDING_MODEL`           | Embedding 模型       | —                       |
+| `EMBEDDING_DIMENSIONS`      | 向量维度               | `1536`                  |
+| `ELASTICSEARCH_URL`         | ES 地址              | `http://localhost:9200` |
+| `NEO4J_URI`                 | Neo4j Bolt 地址      | `bolt://localhost:7687` |
+| `NEO4J_PASSWORD`            | Neo4j 密码           | —                       |
+| `SEARCH_TOP_K`              | 检索返回条数             | `10`                    |
+| `SEARCH_RRF_K`              | RRF 平滑系数           | `60`                    |
+| `LANGCHAIN_TRACING_V2`      | 开启 LangSmith       | `false`                 |
+| `LANGCHAIN_API_KEY`         | LangSmith API Key  | —                       |
+| `LANGCHAIN_PROJECT`         | LangSmith 项目名      | —                       |
 
 > 注意：有道笔记同步入库使用的 `userId` 可能与 `MEM0_USER_ID` 不同，检索时需传入正确的 `userId`（如 `demo_user_001`）。
 
@@ -249,17 +253,79 @@ curl -X POST "http://localhost:3001/api/knowledge/search?userId=demo_user_001" \
 
 ## 常见问题
 
-**Docker 未启动**  
+**Docker 未启动**\
 Redis / PostgreSQL / ES / Neo4j 不可用，后端会降级或检索失败。先执行 `docker compose up -d`。
 
-**向量化失败**  
+**向量化失败**\
 检查 `EMBEDDING_MODEL` 与 `EMBEDDING_DIMENSIONS` 是否匹配；可用 `POST /api/knowledge/ingest/retry` 重试。
 
-**ES 连接失败**  
+**ES 连接失败**\
 客户端版本需与 ES 8.15 匹配（`@elastic/elasticsearch@8.15.x`）。
 
-**检索无结果**  
+**检索无结果**\
 确认文档 `status = indexed`，且 `userId` 与入库时一致；可执行 `POST /api/knowledge/search/reindex?userId=xxx` 重建索引。
+
+## 检索评测
+
+内置 RAG 检索评测工具，可量化评估三路混合检索（向量 / BM25 / 图谱）的召回质量。
+
+### 评测指标
+
+| 指标 | 说明 |
+|------|------|
+| Recall | 召回率：找到的相关文档数 / 总相关文档数 |
+| Precision | 精确率：找到的相关文档数 / 总返回文档数 |
+| MRR | 第一个相关结果的排名倒数 |
+| NDCG@K | 归一化折扣累积增益，衡量排序质量 |
+| Channel Hits | 检索渠道命中分布（vector / bm25 / graph） |
+
+### 评测数据集
+
+预置 7 条测试用例，覆盖 4 种查询类型 × 3 种难度：
+
+| 类型 | 说明 | 示例 |
+|------|------|------|
+| `semantic` | 语义相似，测试向量检索 | "面试自我介绍应该怎么说" |
+| `keyword` | 关键词匹配，测试 BM25 | "Vue3 的 Composition API 怎么用" |
+| `relationship` | 实体关联，测试图谱检索 | "前端框架有哪些主流选择" |
+| `mixed` | 混合查询，测试 RRF 融合 | "前端性能优化有哪些方法" |
+
+数据集定义在 [`dataset.ts`](file:///d:/职业/code/cursor/assistant/chat/end/src/knowledge/evaluation/dataset.ts)，可按相同格式扩展用例。
+
+### 评测 API
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| `GET` | `/api/knowledge/evaluation/cases` | 查看评测数据集 |
+| `POST` | `/api/knowledge/evaluation/run` | 运行预置数据集评测（支持 `?topK=N`） |
+| `POST` | `/api/knowledge/evaluation/run/custom` | 运行自定义评测用例 |
+
+### 示例：运行预置评测
+
+```bash
+curl -X POST "http://localhost:3001/api/knowledge/evaluation/run?topK=5" \
+  -H "Authorization: Bearer <token>"
+```
+
+返回报告包含：整体平均指标（avgRecall / avgPrecision / avgMrr / avgNdcg）、按难度与查询类型分组的聚合统计、每个用例的详细结果。
+
+### 示例：自定义评测
+
+```bash
+curl -X POST "http://localhost:3001/api/knowledge/evaluation/run/custom" \
+  -H "Authorization: Bearer <token>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "cases": [{
+      "id": "custom_001",
+      "query": "Redis 缓存策略",
+      "expectedDocIds": ["<doc-uuid>"],
+      "difficulty": "medium",
+      "queryType": "keyword"
+    }],
+    "topK": 5
+  }'
+```
 
 ## 相关文档
 

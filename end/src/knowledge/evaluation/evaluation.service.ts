@@ -1,29 +1,20 @@
-import { Injectable } from '@nestjs/common'
+import { Injectable, Logger } from '@nestjs/common'
 import { HybridSearchService } from '../retrieval/hybrid-search.service'
 import type { EvaluationCase } from './dataset'
-
-export interface EvaluationMetrics {
-  /** 召回率：找到的相关文档数 / 总相关文档数 */
-  recall: number
-  /** 精确率：找到的相关文档数 / 总返回文档数 */
-  precision: number
-  /** MRR：第一个相关结果的排名倒数 */
-  mrr: number
-  /** NDCG@K：归一化折扣累积增益 */
-  ndcg: number
-  /** 检索渠道命中分布 */
-  channelHits: Record<string, number>
-}
+import { EVALUATION_DATASET, DEFAULT_USER_ID } from './dataset'
 
 export interface CaseResult {
   caseId: string
   query: string
   expectedDocIds: string[]
-  /** 实际返回的 docId 列表 */
   retrievedDocIds: string[]
-  /** 实际返回的 chunkId 列表（去重） */
-  retrievedChunkIds: string[]
-  metrics: EvaluationMetrics
+  metrics: {
+    recall: number
+    precision: number
+    mrr: number
+    ndcg: number
+  }
+  channelHits: Record<string, number>
   difficulty?: string
   queryType?: string
 }
@@ -36,128 +27,122 @@ export interface EvaluationReport {
     avgMrr: number
     avgNdcg: number
   }
-  byDifficulty: Record<string, { count: number; avgRecall: number; avgPrecision: number }>
-  byQueryType: Record<string, { count: number; avgRecall: number; avgPrecision: number }>
+  byDifficulty: Record<string, { count: number; avgNdcg: number }>
+  byQueryType: Record<string, { count: number; avgNdcg: number }>
+  channelDistribution: Record<string, number>
   caseResults: CaseResult[]
 }
 
 @Injectable()
 export class EvaluationService {
+  private readonly logger = new Logger(EvaluationService.name)
+
   constructor(private readonly search: HybridSearchService) {}
 
-  /** 计算单个用例的指标 */
-  private calcMetrics(
-    expectedDocIds: string[],
-    retrievedDocIds: string[],
-    hits: Array<{ docId: string; channel: string }>,
-  ): EvaluationMetrics {
-    const expectedSet = new Set(expectedDocIds)
-    const uniqueRetrievedDocIds = [...new Set(retrievedDocIds)]
-
-    // 找出命中的文档
-    const hitDocs = uniqueRetrievedDocIds.filter((id) => expectedSet.has(id))
-    const hitCount = hitDocs.length
-
-    // Recall
-    const recall = expectedDocIds.length > 0 ? hitCount / expectedDocIds.length : 1
-
-    // Precision
-    const precision = uniqueRetrievedDocIds.length > 0 ? hitCount / uniqueRetrievedDocIds.length : 0
-
-    // MRR (Mean Reciprocal Rank) — 第一个命中的排名倒数
-    let mrr = 0
-    for (let rank = 0; rank < uniqueRetrievedDocIds.length; rank++) {
-      if (expectedSet.has(uniqueRetrievedDocIds[rank])) {
-        mrr = 1 / (rank + 1)
-        break
-      }
-    }
-
-    // NDCG@K
-    const k = Math.max(uniqueRetrievedDocIds.length, expectedDocIds.length)
-    let dcg = 0
-    let idcg = 0
-    for (let i = 0; i < k; i++) {
-      const isRelevant =
-        i < uniqueRetrievedDocIds.length ? expectedSet.has(uniqueRetrievedDocIds[i]) : false
-      dcg += isRelevant ? 1 / Math.log2(i + 2) : 0
-      if (i < expectedDocIds.length) {
-        idcg += 1 / Math.log2(i + 2)
-      }
-    }
-    const ndcg = idcg > 0 ? dcg / idcg : 0
-
-    // 渠道命中分布
-    const channelHits: Record<string, number> = {}
-    const seenChannels = new Set<string>()
-    for (const hit of hits) {
-      if (expectedSet.has(hit.docId) && !seenChannels.has(`${hit.docId}:${hit.channel}`)) {
-        seenChannels.add(`${hit.docId}:${hit.channel}`)
-        channelHits[hit.channel] = (channelHits[hit.channel] || 0) + 1
-      }
-    }
-
-    return { recall, precision, mrr, ndcg, channelHits }
+  /** 计算 Recall */
+  private calculateRecall(expected: string[], retrieved: string[]): number {
+    if (expected.length === 0) return 0
+    const relevantRetrieved = expected.filter((id) => retrieved.includes(id))
+    return relevantRetrieved.length / expected.length
   }
 
-  /** 运行单个用例评估 */
+  /** 计算 Precision */
+  private calculatePrecision(expected: string[], retrieved: string[]): number {
+    if (retrieved.length === 0) return 0
+    const relevantRetrieved = retrieved.filter((id) => expected.includes(id))
+    return relevantRetrieved.length / retrieved.length
+  }
+
+  /** 计算 MRR (Mean Reciprocal Rank) */
+  private calculateMRR(expected: string[], retrieved: string[]): number {
+    for (let i = 0; i < retrieved.length; i++) {
+      if (expected.includes(retrieved[i])) {
+        return 1 / (i + 1)
+      }
+    }
+    return 0
+  }
+
+  /** 计算 NDCG@K */
+  private calculateNDCG(expected: string[], retrieved: string[], k = 5): number {
+    const dcg = retrieved.slice(0, k).reduce((sum, docId, index) => {
+      const relevance = expected.includes(docId) ? 1 : 0
+      return sum + relevance / Math.log2(index + 2)
+    }, 0)
+
+    const idealDcg = expected.slice(0, k).reduce((sum, _, index) => {
+      return sum + 1 / Math.log2(index + 2)
+    }, 0)
+
+    return idealDcg > 0 ? dcg / idealDcg : 0
+  }
+
+  /** 评估单个用例 */
   async evaluateCase(
     testCase: EvaluationCase,
-    userId: string,
     topK = 5,
   ): Promise<CaseResult> {
-    const result = await this.search.search(testCase.query, {
-      userId,
-      topK,
-    })
+    try {
+      const result = await this.search.search(testCase.query, {
+        userId: DEFAULT_USER_ID,
+        topK,
+      })
 
-    // 按检索顺序去重提取 docId
-    const retrievedDocIds: string[] = []
-    const retrievedChunkIds: string[] = []
-    const seenDocs = new Set<string>()
-    const seenChunks = new Set<string>()
+      const retrievedDocIds = result.hits.map((hit) => hit.docId)
 
-    for (const hit of result.hits) {
-      if (!seenDocs.has(hit.docId)) {
-        retrievedDocIds.push(hit.docId)
-        seenDocs.add(hit.docId)
+      const recall = this.calculateRecall(testCase.expectedDocIds, retrievedDocIds)
+      const precision = this.calculatePrecision(testCase.expectedDocIds, retrievedDocIds)
+      const mrr = this.calculateMRR(testCase.expectedDocIds, retrievedDocIds)
+      const ndcg = this.calculateNDCG(testCase.expectedDocIds, retrievedDocIds, topK)
+
+      // 统计渠道命中
+      const channelHits: Record<string, number> = {}
+      for (const hit of result.hits) {
+        const channel = hit.channel || 'unknown'
+        channelHits[channel] = (channelHits[channel] || 0) + 1
       }
-      if (!seenChunks.has(hit.chunkId)) {
-        retrievedChunkIds.push(hit.chunkId)
-        seenChunks.add(hit.chunkId)
+
+      return {
+        caseId: testCase.id,
+        query: testCase.query,
+        expectedDocIds: testCase.expectedDocIds,
+        retrievedDocIds,
+        metrics: { recall, precision, mrr: mrr, ndcg },
+        channelHits,
+        difficulty: testCase.difficulty,
+        queryType: testCase.queryType,
       }
-      if (retrievedDocIds.length >= topK && retrievedChunkIds.length >= topK) break
-    }
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error'
+      this.logger.error(`评估用例 ${testCase.id} 失败：${errorMessage}`)
 
-    const metrics = this.calcMetrics(
-      testCase.expectedDocIds,
-      retrievedDocIds,
-      result.hits.map((h) => ({ docId: h.docId, channel: h.channel })),
-    )
-
-    return {
-      caseId: testCase.id,
-      query: testCase.query,
-      expectedDocIds: testCase.expectedDocIds,
-      retrievedDocIds: retrievedDocIds.slice(0, topK),
-      retrievedChunkIds: retrievedChunkIds.slice(0, topK),
-      metrics,
-      difficulty: testCase.difficulty,
-      queryType: testCase.queryType,
+      return {
+        caseId: testCase.id,
+        query: testCase.query,
+        expectedDocIds: testCase.expectedDocIds,
+        retrievedDocIds: [],
+        metrics: { recall: 0, precision: 0, mrr: 0, ndcg: 0 },
+        channelHits: {},
+        difficulty: testCase.difficulty,
+        queryType: testCase.queryType,
+      }
     }
   }
 
   /** 运行完整评估集 */
   async runEvaluation(
-    cases: EvaluationCase[],
-    userId: string,
+    cases?: EvaluationCase[],
     topK = 5,
   ): Promise<EvaluationReport> {
+    const evalCases = cases ?? EVALUATION_DATASET
+
+    this.logger.log(`开始运行检索评估，共 ${evalCases.length} 个用例`)
+
     const caseResults = await Promise.all(
-      cases.map((c) => this.evaluateCase(c, userId, topK)),
+      evalCases.map((c) => this.evaluateCase(c, topK)),
     )
 
-    // Overall metrics
+    // 计算整体指标
     const avgRecall =
       caseResults.reduce((s, r) => s + r.metrics.recall, 0) / caseResults.length
     const avgPrecision =
@@ -167,46 +152,57 @@ export class EvaluationService {
     const avgNdcg =
       caseResults.reduce((s, r) => s + r.metrics.ndcg, 0) / caseResults.length
 
-    // Group by difficulty
-    const byDifficulty: Record<string, { count: number; avgRecall: number; avgPrecision: number }> = {}
+    // 按难度分组
+    const byDifficulty: Record<string, { count: number; avgNdcg: number }> = {}
     for (const r of caseResults) {
       const key = r.difficulty || 'unknown'
       if (!byDifficulty[key]) {
-        byDifficulty[key] = { count: 0, avgRecall: 0, avgPrecision: 0 }
+        byDifficulty[key] = { count: 0, avgNdcg: 0 }
       }
       const group = byDifficulty[key]
       group.count++
-      group.avgRecall += r.metrics.recall
-      group.avgPrecision += r.metrics.precision
+      group.avgNdcg += r.metrics.ndcg
     }
     for (const g of Object.values(byDifficulty)) {
-      g.avgRecall /= g.count
-      g.avgPrecision /= g.count
+      g.avgNdcg /= g.count
     }
 
-    // Group by query type
-    const byQueryType: Record<string, { count: number; avgRecall: number; avgPrecision: number }> = {}
+    // 按查询类型分组
+    const byQueryType: Record<string, { count: number; avgNdcg: number }> = {}
     for (const r of caseResults) {
       const key = r.queryType || 'unknown'
       if (!byQueryType[key]) {
-        byQueryType[key] = { count: 0, avgRecall: 0, avgPrecision: 0 }
+        byQueryType[key] = { count: 0, avgNdcg: 0 }
       }
       const group = byQueryType[key]
       group.count++
-      group.avgRecall += r.metrics.recall
-      group.avgPrecision += r.metrics.precision
+      group.avgNdcg += r.metrics.ndcg
     }
     for (const g of Object.values(byQueryType)) {
-      g.avgRecall /= g.count
-      g.avgPrecision /= g.count
+      g.avgNdcg /= g.count
     }
 
-    return {
+    // 渠道分布
+    const channelDistribution: Record<string, number> = {}
+    for (const r of caseResults) {
+      for (const [channel, count] of Object.entries(r.channelHits)) {
+        channelDistribution[channel] = (channelDistribution[channel] || 0) + count
+      }
+    }
+
+    const report: EvaluationReport = {
       totalCases: caseResults.length,
       overallMetrics: { avgRecall, avgPrecision, avgMrr, avgNdcg },
       byDifficulty,
       byQueryType,
+      channelDistribution,
       caseResults,
     }
+
+    this.logger.log(
+      `评估完成 - avgNDCG: ${avgNdcg.toFixed(3)}, avgRecall: ${avgRecall.toFixed(3)}, avgPrecision: ${avgPrecision.toFixed(3)}, avgMRR: ${avgMrr.toFixed(3)}`,
+    )
+
+    return report
   }
 }

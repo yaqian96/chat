@@ -13,17 +13,20 @@ export class EvaluationController {
 
   @Get('cases')
   getCases() {
-    return { total: EVALUATION_DATASET.length, cases: EVALUATION_DATASET }
+    return { 
+      total: EVALUATION_DATASET.length, 
+      cases: EVALUATION_DATASET,
+      format: 'retrieval',
+      metrics: ['Recall', 'Precision', 'MRR', 'NDCG', 'Channel Hits'],
+    }
   }
 
   @Post('run')
   async runEvaluation(
-    @CurrentUser() user: AuthUser,
     @Query('topK') topK?: string,
   ) {
     return this.evaluator.runEvaluation(
-      EVALUATION_DATASET,
-      user.id,
+      undefined, // 使用预置数据集
       topK ? Number(topK) : 5,
     )
   }
@@ -31,11 +34,9 @@ export class EvaluationController {
   @Post('run/custom')
   async runCustomEvaluation(
     @Body() body: { cases: EvaluationCase[]; topK?: number },
-    @CurrentUser() user: AuthUser,
   ) {
     return this.evaluator.runEvaluation(
       body.cases,
-      user.id,
       body.topK ?? 5,
     )
   }
