@@ -213,8 +213,15 @@ export class SessionsService implements OnModuleInit {
       return this.memorySessions.get(sessionId) ?? null
     }
 
-    const raw = await this.redis.getClient().get(this.sessionKey(sessionId))
+    const client = this.redis.getClient()
+    const raw = await client.get(this.sessionKey(sessionId))
+    
     if (!raw) return null
+    
+    // 🔥 滑动 TTL：每次访问时刷新 90 天，让活跃会话永不过期
+    await client.expire(this.sessionKey(sessionId), SESSION_TTL_SECONDS)
+    await client.expire(this.sessionMessagesKey(sessionId), SESSION_TTL_SECONDS)
+    
     return JSON.parse(raw) as SessionMeta
   }
 

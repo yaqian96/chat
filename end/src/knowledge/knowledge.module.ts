@@ -66,6 +66,6 @@ import { EvaluationService } from './evaluation/evaluation.service'
     IndexSyncService,
     EvaluationService,
   ],
-  exports: [KnowledgeService, IngestionService, HybridSearchService, IndexSyncService],
+  exports: [KnowledgeService, IngestionService, HybridSearchService, IndexSyncService, Neo4jClient],
 })
 export class KnowledgeModule {}

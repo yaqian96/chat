@@ -17,6 +17,7 @@ import { MemoryClient } from 'mem0ai'
 import { HybridSearchService } from '../knowledge/retrieval/hybrid-search.service'
 import { RedisService } from '../redis/redis.service'
 import { SessionsService } from '../sessions/sessions.service'
+import { FactChecker } from './services/fact-checker.service'
 import {
   AGENT_SYSTEM_PROMPT,
   SUMMARY_PROMPT,
@@ -51,6 +52,7 @@ export class ChatService implements OnModuleInit {
     private readonly redis: RedisService,
     private readonly sessions: SessionsService,
     private readonly knowledgeSearch: HybridSearchService,
+    private readonly factChecker: FactChecker,
   ) {}
 
   async onModuleInit() {
@@ -214,16 +216,48 @@ export class ChatService implements OnModuleInit {
     const assistantText =
       lastAiText || extractText(finalMessages.at(-1)?.content) || ''
 
+    // 事实核查：在保存前检查回答中的事实
+    const factCheckStart = Date.now()
+    const factCheckResult = await this.factChecker.checkResponse(
+      assistantText,
+      userId,
+    )
+    const factCheckMs = Date.now() - factCheckStart
+
+    // 如果检测到幻觉，添加警告信息
+    let finalResponse = assistantText
+    if (factCheckResult.hasHallucination) {
+      this.logger.warn(
+        `检测到 ${factCheckResult.failedFacts.length} 个潜在幻觉 session=${sessionId}`,
+      )
+
+      // 在回答末尾添加核查说明
+      const warnings = factCheckResult.failedFacts
+        .map(
+          (f) =>
+            `\n⚠️ 核查警告："${f.statement}" - ${f.reason}${f.correction ? ` (可能应为：${f.correction})` : ''}`,
+        )
+        .join('')
+
+      finalResponse = assistantText + warnings
+    }
+
     const redisMessages = messagesForRedis(finalMessages)
     await this.redisStore.saveMessages(sessionId, redisMessages)
     await this.sessions.addMessage(sessionId, 'user', userText)
-    await this.sessions.addMessage(sessionId, 'assistant', assistantText)
+    await this.sessions.addMessage(sessionId, 'assistant', finalResponse)
 
     yield {
       type: 'done',
       meta: {
         redisCount: redisMessages.length,
         mem0Pending: true,
+        factCheck: {
+          factsExtracted: factCheckResult.facts.length,
+          hasHallucination: factCheckResult.hasHallucination,
+          failedCount: factCheckResult.failedFacts.length,
+          durationMs: factCheckMs,
+        },
       },
     }
 
