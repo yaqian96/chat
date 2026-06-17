@@ -21,6 +21,7 @@ import { FactChecker } from './services/fact-checker.service'
 import {
   AGENT_SYSTEM_PROMPT,
   SUMMARY_PROMPT,
+  CONTINUATION_PROMPT,
   memorySchema,
   type MemoryClassification,
 } from './prompts/memory.prompts'
@@ -32,9 +33,13 @@ import {
 import { RedisMessageStore } from './stores/redis-message.store'
 
 export interface StreamEvent {
-  type: 'token' | 'done' | 'meta'
+  type: 'token' | 'done' | 'meta' | 'error' | 'interrupted'
   content?: string
   meta?: Record<string, unknown>
+}
+
+export interface StreamOptions {
+  signal?: AbortSignal
 }
 
 const MEMORY_CLASSIFIER_MODEL = 'google/gemma-3-4b-it:free'
@@ -138,6 +143,7 @@ export class ChatService implements OnModuleInit {
     sessionId: string,
     userText: string,
     userId: string,
+    options?: StreamOptions,
   ): AsyncGenerator<StreamEvent> {
     if (!this.ready || !this.agent) {
       throw new ServiceUnavailableException(
@@ -147,7 +153,33 @@ export class ChatService implements OnModuleInit {
 
     await this.sessions.assertSessionOwner(sessionId, userId)
 
-    const history = await this.redisStore.loadMessages(sessionId)
+    const signal = options?.signal
+    const isContinuation = this.isContinuationRequest(userText)
+
+    // 处理续传场景
+    let history: BaseMessage[]
+    let continuationContent: string | null = null
+
+    if (isContinuation) {
+      const interruptedState = await this.redisStore.loadInterruptedState(
+        sessionId,
+      )
+      if (interruptedState) {
+        continuationContent = interruptedState.content
+        // 从历史中移除最后一条部分 AI 消息，避免与 CONTINUATION_PROMPT 重复
+        const msgs = interruptedState.fullMessages
+        history = msgs.filter((msg) => msg !== msgs.at(-1))
+        this.logger.log(
+          `Resuming from interrupted state session=${sessionId} contentLength=${continuationContent.length} historyMsgs=${history.length}`,
+        )
+      } else {
+        // 没有中断状态，回退到正常历史
+        history = await this.redisStore.loadMessages(sessionId)
+      }
+    } else {
+      history = await this.redisStore.loadMessages(sessionId)
+    }
+
     const searchTopK = Number(this.config.get('SEARCH_TOP_K') ?? 10) || 10
     const prefetchStarted = Date.now()
 
@@ -166,8 +198,13 @@ export class ChatService implements OnModuleInit {
     const invokeMessages: BaseMessage[] = [
       ...(memoryMsg ? [memoryMsg] : []),
       ...(knowledgeMsg ? [new SystemMessage(knowledgeMsg)] : []),
+      // 续传模式：添加续传指令（不添加 HumanMessage，避免污染上下文）
+      ...(isContinuation && continuationContent
+        ? [new SystemMessage(CONTINUATION_PROMPT(continuationContent))]
+        : []),
       ...history,
-      new HumanMessage(userText),
+      // 非续传模式：添加用户消息
+      ...(isContinuation ? [] : [new HumanMessage(userText)]),
     ]
 
     yield {
@@ -179,6 +216,7 @@ export class ChatService implements OnModuleInit {
         knowledgeHits: knowledge.hits.length,
         knowledgeChannels: knowledge.channels,
         prefetchMs,
+        isContinuation,
       },
     }
 
@@ -191,6 +229,38 @@ export class ChatService implements OnModuleInit {
     let finalMessages: BaseMessage[] = invokeMessages
 
     for await (const chunk of stream) {
+      // 检查中断信号
+      if (signal?.aborted) {
+        this.logger.log(
+          `Stream interrupted by user session=${sessionId} partialLength=${lastAiText.length}`,
+        )
+
+        // 中断时也保存已生成的部分到 sessions，确保标题和上下文不丢失
+        // 续传模式：不将续传指令作为用户消息保存
+        if (lastAiText.length > 0) {
+          const allMessages = isContinuation
+            ? [...invokeMessages]
+            : [...invokeMessages, new HumanMessage(userText)]
+          await this.redisStore.saveInterruptedState(sessionId, {
+            content: lastAiText,
+            fullMessages: allMessages,
+          })
+
+          // 保存到 sessions：确保标题和消息列表不丢失
+          if (isContinuation) {
+            // 续传中断：只保存部分 AI 回答（不保存续传指令）
+            await this.sessions.addMessage(sessionId, 'assistant', lastAiText)
+          } else {
+            // 正常对话中断：保存用户消息 + 部分 AI 回答
+            await this.sessions.addMessage(sessionId, 'user', userText)
+            await this.sessions.addMessage(sessionId, 'assistant', lastAiText)
+          }
+        }
+
+        yield { type: 'interrupted', content: lastAiText }
+        return
+      }
+
       if (!Array.isArray(chunk) || chunk.length < 2) continue
 
       if (chunk[0] === 'messages') {
@@ -244,8 +314,21 @@ export class ChatService implements OnModuleInit {
 
     const redisMessages = messagesForRedis(finalMessages)
     await this.redisStore.saveMessages(sessionId, redisMessages)
-    await this.sessions.addMessage(sessionId, 'user', userText)
-    await this.sessions.addMessage(sessionId, 'assistant', finalResponse)
+
+    // 续传模式：合并部分回答和续传回答，更新最后一条消息
+    if (isContinuation) {
+      const interruptedState = await this.redisStore.loadInterruptedState(sessionId)
+      const mergedContent = interruptedState
+        ? interruptedState.content + finalResponse
+        : finalResponse
+      await this.sessions.updateLastAssistantMessage(sessionId, mergedContent)
+    } else {
+      await this.sessions.addMessage(sessionId, 'user', userText)
+      await this.sessions.addMessage(sessionId, 'assistant', finalResponse)
+    }
+
+    // 清理中断状态（正常完成时）
+    await this.redisStore.clearInterruptedState(sessionId)
 
     yield {
       type: 'done',
@@ -272,6 +355,11 @@ export class ChatService implements OnModuleInit {
         const message = err instanceof Error ? err.message : String(err)
         this.logger.warn(`Mem0 classify failed session=${sessionId}: ${message}`)
       })
+  }
+
+  private isContinuationRequest(text: string): boolean {
+    const patterns = ['继续', '请继续', 'continue', '接着说', '继续上面的内容']
+    return patterns.some((p) => text.toLowerCase().includes(p)) && text.length < 50
   }
 }
 

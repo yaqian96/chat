@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, watch, nextTick } from 'vue'
-import { PanelLeftOpen, Zap } from 'lucide-vue-next'
+import { PanelLeftOpen, Zap, StopCircle, RefreshCw } from 'lucide-vue-next'
 import ChatMessage from './ChatMessage.vue'
 import ChatInput from './ChatInput.vue'
 import type { ChatMessage as ChatMessageType } from '@/types/chat'
@@ -10,10 +10,14 @@ const props = defineProps<{
   messages: ChatMessageType[]
   disabled?: boolean
   sidebarCollapsed?: boolean
+  isStreaming?: boolean
+  hasInterruptedMessage?: boolean
 }>()
 
 const emit = defineEmits<{
   send: [message: string]
+  stop: []
+  continue: []
   toggleSidebar: []
 }>()
 
@@ -101,6 +105,31 @@ function handleSend(text: string) {
     </div>
 
     <div class="shrink-0 border-t border-gray-100 bg-white">
+      <!-- 中断操作栏 -->
+      <div
+        v-if="isStreaming || hasInterruptedMessage"
+        class="flex items-center justify-center gap-2 px-4 py-2 border-b border-gray-100"
+      >
+        <button
+          v-if="isStreaming"
+          type="button"
+          class="flex items-center gap-2 px-4 py-2 rounded-lg bg-red-50 hover:bg-red-100 text-red-600 transition-colors"
+          @click="emit('stop')"
+        >
+          <StopCircle :size="16" />
+          <span>停止生成</span>
+        </button>
+        <button
+          v-if="hasInterruptedMessage"
+          type="button"
+          class="flex items-center gap-2 px-4 py-2 rounded-lg bg-blue-50 hover:bg-blue-100 text-blue-600 transition-colors"
+          @click="emit('continue')"
+        >
+          <RefreshCw :size="16" />
+          <span>继续生成</span>
+        </button>
+      </div>
+
       <ChatInput :disabled="disabled" @send="handleSend" />
     </div>
   </div>

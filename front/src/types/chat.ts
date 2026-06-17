@@ -5,6 +5,7 @@ export interface ChatMessage {
   role: MessageRole
   content: string
   createdAt: Date
+  status?: 'streaming' | 'complete' | 'incomplete'
 }
 
 export interface ChatSession {

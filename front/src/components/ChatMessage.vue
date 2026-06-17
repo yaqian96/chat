@@ -86,6 +86,14 @@ async function handleCopy() {
 
       <div class="markdown-body" v-html="htmlContent" />
 
+      <!-- 中断标记 -->
+      <div
+        v-if="message.status === 'incomplete'"
+        class="mt-2 px-3 py-1.5 bg-amber-50 border border-amber-200 rounded-lg text-sm text-amber-700 inline-block"
+      >
+        ⚠️ 回答已停止
+      </div>
+
       <div class="flex items-center gap-1 mt-4">
         <button
           type="button"

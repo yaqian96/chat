@@ -134,6 +134,20 @@ export const SUMMARY_PROMPT = `你是对话摘要助手。用中文简洁总结�
 
 摘要：`
 
+export const CONTINUATION_PROMPT = (previousContent: string) =>
+  `【续传模式】用户要求继续生成内容。
+
+## 续传规则
+1. 以下是上一轮回答已生成的内容：
+---
+${previousContent}
+---
+2. 请直接从这里继续，不要重复已生成的内容
+3. 保持相同的回答风格和格式
+4. 如果内容已经完整，可简单确认已完成
+
+请继续生成：`
+
 export const AGENT_SYSTEM_PROMPT = `你是会话助手。请结合以下各类记忆提供个性化服务：
 
 ## 你的能力

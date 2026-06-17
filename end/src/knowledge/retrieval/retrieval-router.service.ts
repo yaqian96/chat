@@ -70,72 +70,72 @@ export class RetrievalRouter {
 
     // 开放性问题特征词
     const openEndedPatterns = [
-      /如何\b/,
-      /怎么\b/,
-      /为什么\b/,
-      /怎么样\b/,
-      /怎样\b/,
-      /what\s+to\s+do\b/,
-      /how\s+to\b/,
-      /why\b/,
+      /如何/,
+      /怎么/,
+      /为什么/,
+      /怎么样/,
+      /怎样/,
+      /what\s+to\s+do/,
+      /how\s+to/,
+      /\bwhy\b/,
     ]
 
     // 事实性问题特征词
     const factualPatterns = [
-      /是什么\b/,
-      /多少\b/,
-      /何时\b/,
-      /哪里\b/,
-      /哪个\b/,
-      /what\s+is\b/,
-      /how\s+many\b/,
-      /when\b/,
-      /where\b/,
+      /是什么/,
+      /多少/,
+      /何时/,
+      /哪里/,
+      /哪个/,
+      /what\s+is/,
+      /how\s+many/,
+      /\bwhen\b/,
+      /\bwhere\b/,
     ]
 
     // 实体关系特征词
     const relationPatterns = [
-      /关联\b/,
-      /关系\b/,
-      /区别\b/,
-      /对比\b/,
-      /差异\b/,
-      /vs\b/,
-      / versus\b/,
-      /和.*有什么不同\b/,
-      /与.*的关系\b/,
+      /关联/,
+      /关系/,
+      /区别/,
+      /对比/,
+      /差异/,
+      /\bvs\b/,
+      /\bversus\b/,
+      /和.*有什么不同/,
+      /与.*的关系/,
     ]
 
     // 技术原理特征词
     const technicalPatterns = [
-      /原理\b/,
-      /机制\b/,
-      /底层\b/,
-      /实现\b/,
-      /核心\b/,
-      /本质\b/,
-      /underlying\b/,
-      /mechanism\b/,
-      /how\s+.*\s+work\b/,
+      /原理/,
+      /机制/,
+      /底层/,
+      /实现/,
+      /核心/,
+      /本质/,
+      /\bunderlying\b/,
+      /\bmechanism\b/,
+      /how\s+.*\s+work/,
     ]
 
     // 精确匹配特征（包含具体术语、API、方法名等）
     const exactMatchPatterns = [
-      /\b[A-Z][a-zA-Z]+\.[a-z]+\b/, // CamelCase.method
-      /\b[A-Z]{2,}\b/, // 大写字母缩写
+      /[A-Z][a-zA-Z]+\.[a-z]+/, // CamelCase.method
+      /[A-Z]{2,}/, // 大写字母缩写
       /['"`][^'"`]+['"`]/, // 引号包裹的术语
-      /\b\w+\s*\(\s*\)/, // 方法调用
-      /\bv\d+\.\d+\b/, // 版本号
+      /\w+\s*\(\s*\)/, // 方法调用
+      /v\d+\.\d+/, // 版本号
     ]
 
     // 综合问题特征（包含多个问号或连接词）
     const comprehensivePatterns = [
-      /.*[?？].*[?？].*/, // 多个问号
-      /并且\b/,
-      /以及\b/,
-      /还有\b/,
-      /同时\b/,
-      /.*[,.].*[,.].*/, // 多个逗号分隔
+      /[?？].*[?？]/, // 多个问号
+      /并且/,
+      /以及/,
+      /还有/,
+      /同时/,
+      /[,.].*[,.]/, // 多个逗号分隔
     ]
 
     // 计算各类型匹配得分
@@ -175,8 +175,8 @@ export class RetrievalRouter {
     // 特殊规则优先
     // 1. 包含精确术语 + 关系查询 -> BM25 + Graph
     if (
-      this.countMatches(q, [/\b[A-Z][a-zA-Z]+\b/, /['"`][^'"`]+['"`]/]) > 0 &&
-      this.countMatches(q, [/关联\b/, /关系\b/, /对比\b/]) > 0
+      this.countMatches(q, [/[a-z][a-z0-9]+ api/, /['"`][^'"`]+['"`]/, /component/, /class/, /dom/]) > 0 &&
+      this.countMatches(q, [/关联/, /关系/, /对比/]) > 0
     ) {
       return {
         strategy: RetrievalStrategy.BM25_GRAPH,
@@ -186,7 +186,7 @@ export class RetrievalRouter {
     }
 
     // 2. 包含数字/数据查询 -> BM25 + Graph
-    if (this.countMatches(q, [/\d+\s*(个 | 项 | 种 | 多少 | 数量)/, /how\s+many/]) > 0) {
+    if (this.countMatches(q, [/\d+\s*(个|项|种)/, /多少/, /数量/, /how\s+many/]) > 0) {
       return {
         strategy: RetrievalStrategy.BM25_GRAPH,
         confidence: 0.85,
@@ -196,8 +196,8 @@ export class RetrievalRouter {
 
     // 3. 技术原理 + 关联应用 -> 全开
     if (
-      this.countMatches(q, [/原理\b/, /底层\b/, /机制\b/]) > 0 &&
-      this.countMatches(q, [/关联\b/, /应用\b/, /场景\b/]) > 0
+      this.countMatches(q, [/原理/, /底层/, /机制/]) > 0 &&
+      this.countMatches(q, [/关联/, /应用/, /场景/]) > 0
     ) {
       return {
         strategy: RetrievalStrategy.HYBRID,

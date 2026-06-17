@@ -15,8 +15,15 @@ const activeSessionId = ref('')
 const activeSession = ref<ChatSession | null>(null)
 const sending = ref(false)
 const connectionError = ref('')
+const isStreaming = ref(false)
+const hasInterruptedMessage = ref(false)
+const interruptedMessageContent = ref('')
+const interruptedMessageIndex = ref(-1)
+
 type MainView = 'chat' | 'knowledge'
 const mainView = ref<MainView>('chat')
+
+let abortController: AbortController | null = null
 
 async function checkConnection() {
   const { checkHealth } = await import('@/api/client')
@@ -65,6 +72,10 @@ async function loadSession(id: string) {
   try {
     activeSession.value = await api.getSession(id)
     activeSessionId.value = id
+    // 重置中断状态
+    hasInterruptedMessage.value = false
+    interruptedMessageContent.value = ''
+    interruptedMessageIndex.value = -1
   } catch (err) {
     if (err instanceof Error && err.message === 'UNAUTHORIZED') return
     console.error('加载会话失败', err)
@@ -84,6 +95,10 @@ async function handleNewChat() {
     activeSession.value = session
     activeSessionId.value = session.id
     await loadHistory()
+    // 重置中断状态
+    hasInterruptedMessage.value = false
+    interruptedMessageContent.value = ''
+    interruptedMessageIndex.value = -1
   } catch (err) {
     if (err instanceof Error && err.message === 'UNAUTHORIZED') return
     console.error('创建会话失败', err)
@@ -117,9 +132,95 @@ async function handleDeleteSession(id: string) {
   }
 }
 
+function handleStop() {
+  if (abortController) {
+    abortController.abort()
+    abortController = null
+  }
+  isStreaming.value = false
+  sending.value = false
+
+  // 标记最后一条 AI 消息为不完整
+  if (activeSession.value && interruptedMessageIndex.value >= 0) {
+    const msg = activeSession.value.messages[interruptedMessageIndex.value]
+    if (msg) {
+      msg.status = 'incomplete'
+      hasInterruptedMessage.value = true
+      interruptedMessageContent.value = msg.content
+    }
+  }
+}
+
+async function handleContinue() {
+  if (!activeSession.value || sending.value) return
+
+  // 清除中断标记
+  hasInterruptedMessage.value = false
+  interruptedMessageContent.value = ''
+
+  // 将不完整消息更新为完整（续传后会追加）
+  if (interruptedMessageIndex.value >= 0) {
+    const msg = activeSession.value.messages[interruptedMessageIndex.value]
+    if (msg) {
+      msg.status = 'streaming'
+    }
+  }
+
+  // 发送续传请求
+  const continuePrompt = '请继续上面的内容'
+  sending.value = true
+  isStreaming.value = true
+
+  // 创建新的 AbortController（续传也需要可被中断）
+  abortController = new AbortController()
+
+  try {
+    const result = await streamChat(activeSessionId.value, continuePrompt, {
+      onEvent: (event) => {
+        if (event.type === 'token' && event.content) {
+          const msg = activeSession.value?.messages[interruptedMessageIndex.value]
+          if (msg) msg.content += event.content
+        }
+      },
+      signal: abortController.signal,
+    })
+
+    if (result.ok) {
+      await loadHistory()
+      await loadSession(activeSessionId.value)
+    } else {
+      const errText = result.error ?? '对话生成失败'
+      connectionError.value = errText
+    }
+  } catch (err) {
+    // 如果是主动中断，不显示错误
+    if (err instanceof DOMException && err.name === 'AbortError') {
+      return
+    }
+    if (err instanceof Error && err.message === 'UNAUTHORIZED') return
+    console.error('续传失败', err)
+    connectionError.value = err instanceof Error ? err.message : '续传失败'
+  } finally {
+    sending.value = false
+    isStreaming.value = false
+    abortController = null
+  }
+}
+
 async function handleSend(text: string) {
   if (!activeSession.value || sending.value) return
   sending.value = true
+  isStreaming.value = true
+
+  // 如果有中断的不完整消息，先标记为完整
+  if (hasInterruptedMessage.value && interruptedMessageIndex.value >= 0) {
+    const msg = activeSession.value.messages[interruptedMessageIndex.value]
+    if (msg) {
+      msg.status = 'complete'
+    }
+    hasInterruptedMessage.value = false
+    interruptedMessageContent.value = ''
+  }
 
   try {
     if (!activeSessionId.value) {
@@ -146,19 +247,30 @@ async function handleSend(text: string) {
       role: 'assistant',
       content: '',
       createdAt: new Date(),
+      status: 'streaming',
     })
     const assistantIdx = activeSession.value.messages.length - 1
+    interruptedMessageIndex.value = assistantIdx
 
-    const result = await streamChat(activeSessionId.value, text, (event) => {
-      if (event.type === 'token' && event.content) {
-        const msg = activeSession.value?.messages[assistantIdx]
-        if (msg) msg.content += event.content
-      }
+    // 创建新的 AbortController
+    abortController = new AbortController()
+
+    const result = await streamChat(activeSessionId.value, text, {
+      onEvent: (event) => {
+        if (event.type === 'token' && event.content) {
+          const msg = activeSession.value?.messages[assistantIdx]
+          if (msg) msg.content += event.content
+        }
+      },
+      signal: abortController.signal,
     })
 
     if (result.ok) {
       await loadHistory()
       await loadSession(activeSessionId.value)
+    } else if (result.interrupted) {
+      // 中断不视为错误
+      return
     } else {
       const errText = result.error ?? '对话生成失败'
       connectionError.value = errText
@@ -166,12 +278,18 @@ async function handleSend(text: string) {
       if (msg && !msg.content) msg.content = errText
     }
   } catch (err) {
+    // 如果是主动中断，不显示错误
+    if (err instanceof DOMException && err.name === 'AbortError') {
+      return
+    }
     if (err instanceof Error && err.message === 'UNAUTHORIZED') return
     console.error('发送消息失败', err)
     connectionError.value =
       err instanceof Error ? err.message : '发送消息失败'
   } finally {
     sending.value = false
+    isStreaming.value = false
+    abortController = null
   }
 }
 
@@ -235,7 +353,11 @@ onMounted(async () => {
           :messages="activeSession.messages"
           :disabled="sending"
           :sidebar-collapsed="sidebarCollapsed"
+          :is-streaming="isStreaming"
+          :has-interrupted-message="hasInterruptedMessage"
           @send="handleSend"
+          @stop="handleStop"
+          @continue="handleContinue"
           @toggle-sidebar="sidebarCollapsed = false"
         />
         <div

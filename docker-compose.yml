@@ -34,7 +34,7 @@ services:
     container_name: postgres-membot
     restart: always
     ports:
-      - "5432:5432"
+      - "5433:5432"
     environment:
       POSTGRES_USER: membot
       POSTGRES_PASSWORD: membot
@@ -53,7 +53,7 @@ services:
     container_name: pgadmin-membot
     restart: always
     ports:
-      - "5050:80"
+      - "5051:80"
     environment:
       PGADMIN_DEFAULT_EMAIL: admin@membot.com
       PGADMIN_DEFAULT_PASSWORD: membot

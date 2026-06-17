@@ -1,7 +1,7 @@
 import { authHeaders, clearAuth } from '@/stores/auth'
 
 export interface StreamChatEvent {
-  type: 'token' | 'done' | 'meta' | 'error'
+  type: 'token' | 'done' | 'meta' | 'error' | 'interrupted'
   content?: string
   meta?: Record<string, unknown>
 }
@@ -9,13 +9,23 @@ export interface StreamChatEvent {
 export interface StreamChatResult {
   ok: boolean
   error?: string
+  interrupted?: boolean
+}
+
+export interface StreamChatOptions {
+  onEvent: (event: StreamChatEvent) => void
+  signal?: AbortSignal
 }
 
 export async function streamChat(
   sessionId: string,
   message: string,
-  onEvent: (event: StreamChatEvent) => void,
+  options: StreamChatOptions | ((event: StreamChatEvent) => void),
 ): Promise<StreamChatResult> {
+  // 支持两种调用方式：旧版 (onEvent) 和新版 (options 对象)
+  const onEvent = typeof options === 'function' ? options : options.onEvent
+  const signal = typeof options === 'object' ? options.signal : undefined
+
   const res = await fetch(`/api/sessions/${sessionId}/chat/stream`, {
     method: 'POST',
     headers: {
@@ -23,6 +33,7 @@ export async function streamChat(
       ...authHeaders(),
     },
     body: JSON.stringify({ message }),
+    signal, // 传递 abort 信号
   })
 
   if (res.status === 401) {
@@ -40,6 +51,7 @@ export async function streamChat(
   let buffer = ''
   let ok = false
   let error: string | undefined
+  let interrupted = false
 
   while (true) {
     const { done, value } = await reader.read()
@@ -58,11 +70,18 @@ export async function streamChat(
         onEvent(event)
         if (event.type === 'done') ok = true
         if (event.type === 'error') error = event.content ?? '对话生成失败'
+        if (event.type === 'interrupted') {
+          interrupted = true
+          // 携带已生成的内容
+          if (event.content) {
+            onEvent({ type: 'token', content: event.content })
+          }
+        }
       } catch {
         // skip malformed chunk
       }
     }
   }
 
-  return { ok, error }
+  return { ok, error, interrupted }
 }

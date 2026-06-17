@@ -182,6 +182,45 @@ export class SessionsService implements OnModuleInit {
     return message
   }
 
+  async updateLastAssistantMessage(sessionId: string, newContent: string): Promise<void> {
+    const messages = await this.getMessages(sessionId)
+    if (!messages.length) return
+
+    // 找到最后一条 assistant 消息
+    for (let i = messages.length - 1; i >= 0; i--) {
+      if (messages[i].role === 'assistant') {
+        messages[i].content = newContent
+        break
+      }
+    }
+
+    if (this.useMemory) {
+      this.memoryMessages.set(sessionId, messages)
+      return
+    }
+
+    const client = this.redis.getClient()
+    const key = this.sessionMessagesKey(sessionId)
+    const pipeline = client.multi()
+    pipeline.del(key)
+    for (const m of messages) {
+      pipeline.rpush(key, JSON.stringify(m))
+    }
+    pipeline.expire(key, SESSION_TTL_SECONDS)
+    
+    const meta = await this.getSessionMeta(sessionId)
+    if (meta) {
+      pipeline.set(
+        this.sessionKey(sessionId),
+        JSON.stringify({ ...meta, updatedAt: new Date().toISOString() }),
+        'EX',
+        SESSION_TTL_SECONDS,
+      )
+    }
+    
+    await pipeline.exec()
+  }
+
   async deleteSession(sessionId: string): Promise<void> {
     const meta = await this.getSessionMeta(sessionId)
     if (!meta) {
